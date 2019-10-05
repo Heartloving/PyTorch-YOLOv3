@@ -1,6 +1,6 @@
 classes= 80
-train=data/coco/trainvalno5k.txt
-valid=data/coco/5k.txt
-names=data/coco.names
+train=/media/xddz/本地磁盘/Learning/CODE_DATA/DATA/yolov3_data/coco/trainvalno5k.txt
+valid=/media/xddz/本地磁盘/Learning/CODE_DATA/DATA/yolov3_data/coco/5k.txt
+names=/media/xddz/本地磁盘/Learning/CODE_DATA/DATA/yolov3_data/coco.names
 backup=backup/
 eval=coco

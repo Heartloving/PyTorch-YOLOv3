@@ -7,6 +7,6 @@ dist
 output
 data/coco
 backup
-weights/*.weights
+weights
 __pycache__
 checkpoints

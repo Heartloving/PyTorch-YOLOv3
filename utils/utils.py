@@ -50,7 +50,7 @@ def rescale_boxes(boxes, current_dim, original_shape):
     return boxes
 
 
-def xywh2xyxy(x):
+def xywh2xyxy(x): # From (center x, center y, width, height) to (x1, y1, x2, y2)
     y = x.new(x.shape)
     y[..., 0] = x[..., 0] - x[..., 2] / 2
     y[..., 1] = x[..., 1] - x[..., 3] / 2
@@ -212,13 +212,13 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
     inter_rect_y2 = torch.min(b1_y2, b2_y2)
     # Intersection area
     inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1 + 1, min=0) * torch.clamp(
-        inter_rect_y2 - inter_rect_y1 + 1, min=0
+        inter_rect_y2 - inter_rect_y1 + 1, min=0#相交区域
     )
     # Union Area
     b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
     b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
 
-    iou = inter_area / (b1_area + b2_area - inter_area + 1e-16)
+    iou = inter_area / (b1_area + b2_area - inter_area + 1e-16)#交并比
 
     return iou
 
@@ -232,35 +232,58 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
     """
 
     # From (center x, center y, width, height) to (x1, y1, x2, y2)
-    prediction[..., :4] = xywh2xyxy(prediction[..., :4])
+    prediction[..., :4] = xywh2xyxy(prediction[..., :4])#前四行是位置预测，转变格式
+    #我们可以将我们的框的(中心x, 中心y, 高度, 宽度) 属性转换成(左上角x, 左上角y, 右下角x, 右下角y)
+    #这样做用每个框的两个对角坐标能更轻松地计算两个框的IoU
     output = [None for _ in range(len(prediction))]
-    for image_i, image_pred in enumerate(prediction):
+
+    # prediction的前五个数据分别表示 (Cx, Cy, w, h, score)，这里创建一个新的数组，大小与predicton的大小相同
+
+    for image_i, image_pred in enumerate(prediction):#共有B个，对每一个batch进行处理。B*10467*85
         # Filter out confidence scores below threshold
-        image_pred = image_pred[image_pred[:, 4] >= conf_thres]
+
+        image_pred = image_pred[image_pred[:, 4] >= conf_thres]#第5列是置信度，选出置信度大于阈值的
         # If none are remaining => process next image
         if not image_pred.size(0):
             continue
+
         # Object confidence times class confidence
-        score = image_pred[:, 4] * image_pred[:, 5:].max(1)[0]
+        score = image_pred[:, 4] * image_pred[:, 5:].max(1)[0]#max(1)选每列最大的，返回值和索引，【0】是值，【1】是索引
+
+
         # Sort by it
-        image_pred = image_pred[(-score).argsort()]
+        image_pred = image_pred[(-score).argsort()]#按照分数降序排列
+
         class_confs, class_preds = image_pred[:, 5:].max(1, keepdim=True)
         detections = torch.cat((image_pred[:, :5], class_confs.float(), class_preds.float()), 1)
+        # 移除了每一行的这80个类别分数，只保留bbox4个坐标以及objectnness分数，转而增加了有最大值的类别分数及索引。
+        # 将每个方框的(x1,y1,x2,y2,s)与得分最高的这个类的分数s_cls(max_conf)和对应类的序号index_cls(max_conf_score)在列维度上连接起来，
+        # 即将10647x5,10647x1,10647x1三个tensor 在列维度进行concatenate操作，得到一个10647x7的tensor,(x1,y1,x2,y2,s,s_cls,index_cls)。
+        # shape=(10647, 5+1+1=7)
+
         # Perform non-maximum suppression
         keep_boxes = []
+
         while detections.size(0):
             large_overlap = bbox_iou(detections[0, :4].unsqueeze(0), detections[:, :4]) > nms_thres
+            #选出和第一个（置信度最高）iou大于阈值的所有选项，返回tensor([1, 0, 0, 1, 0, 1, 0, 1, 1], dtype=torch.uint8)
+
             label_match = detections[0, -1] == detections[:, -1]
+            #第一行的标签和所有的标签进行匹配，返回[1, 1, 0, 1, 1]类型的tensor
+
             # Indices of boxes with lower confidence scores, large IOUs and matching labels
-            invalid = large_overlap & label_match
+            invalid = large_overlap & label_match#选出既是大的IOU又是同类型的，进行清除
             weights = detections[invalid, 4:5]
+
             # Merge overlapping bboxes by order of confidence
-            detections[0, :4] = (weights * detections[invalid, :4]).sum(0) / weights.sum()
+            detections[0, :4] = (weights * detections[invalid, :4]).sum(0) / weights.sum()#按置信顺序合并重叠框
             keep_boxes += [detections[0]]
+
             detections = detections[~invalid]
+
+
         if keep_boxes:
             output[image_i] = torch.stack(keep_boxes)
-
     return output
 
 

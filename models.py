@@ -18,16 +18,24 @@ def create_modules(module_defs):
     Constructs module list of layer blocks from module configuration in module_defs
     """
     hyperparams = module_defs.pop(0)
+    # module_defs中第一个字典块保存了net信息，获取网络输入、预处理等超参数相关信息
     output_filters = [int(hyperparams["channels"])]
+    # 初始值对应于输入数据3通道，用来存储我们需要持续追踪被应用卷积层的卷积核数量（上一层的卷积核数量（或特征图深度））
+    # 我们不仅需要追踪前一层的卷积核数量，还需要追踪之前每个层。随着不断地迭代，我们将每个模块的输出卷积核数量添加到 output_filters 列表上。
+
     module_list = nn.ModuleList()
+    # module_list用于存储每个block,每个block对应cfg文件中一个块，类似[convolutional]里面就对应一个卷积块
     for module_i, module_def in enumerate(module_defs):
+        #enumerate() 函数用于将一个可遍历的数据对象(如列表、元组或字符串)组合为一个索引序列，同时列出数据下标和数据，一般用在 for 循环当中
         modules = nn.Sequential()
+        # 这里每个块用nn.sequential()创建为了一个module,一个module有多个层
 
         if module_def["type"] == "convolutional":
+            #需要获取卷积层、批归一化层、激活层参数
             bn = int(module_def["batch_normalize"])
-            filters = int(module_def["filters"])
-            kernel_size = int(module_def["size"])
-            pad = (kernel_size - 1) // 2
+            filters = int(module_def["filters"])#output_channel
+            kernel_size = int(module_def["size"])#卷积核大小
+            pad = (kernel_size - 1) // 2 #边界填充数量
             modules.add_module(
                 f"conv_{module_i}",
                 nn.Conv2d(
@@ -42,7 +50,7 @@ def create_modules(module_defs):
             if bn:
                 modules.add_module(f"batch_norm_{module_i}", nn.BatchNorm2d(filters, momentum=0.9, eps=1e-5))
             if module_def["activation"] == "leaky":
-                modules.add_module(f"leaky_{module_i}", nn.LeakyReLU(0.1))
+                modules.add_module(f"leaky_{module_i}", nn.LeakyReLU(0.1))# 给定参数负轴系数0.1
 
         elif module_def["type"] == "maxpool":
             kernel_size = int(module_def["size"])
@@ -54,6 +62,7 @@ def create_modules(module_defs):
 
         elif module_def["type"] == "upsample":
             upsample = Upsample(scale_factor=int(module_def["stride"]), mode="nearest")
+            # 没有使用 Bilinear2dUpsampling,实际使用的为最近邻插值
             modules.add_module(f"upsample_{module_i}", upsample)
 
         elif module_def["type"] == "route":
@@ -61,9 +70,32 @@ def create_modules(module_defs):
             filters = sum([output_filters[1:][i] for i in layers])
             modules.add_module(f"route_{module_i}", EmptyLayer())
 
+        # elif (x["type"] == "route"):
+        #     x["layers"] = x["layers"].split(',')
+        #     # Start  of a route
+        #     start = int(x["layers"][0])
+        #     # end, if there exists one.
+        #     try:
+        #         end = int(x["layers"][1])
+        #     except:
+        #         end = 0
+        #     # Positive anotation: 正值
+        #     if start > 0:
+        #         start = start - index
+        #     if end > 0:  # 若end>0，由于end= end - index，再执行index + end输出的还是第end层的特征
+        #         end = end - index
+        #     route = EmptyLayer()
+        #     module.add_module("route_{0}".format(index), route)
+        #     if end < 0:  # 若end<0，则end还是end，输出index+end(而end<0)故index向后退end层的特征。
+        #         filters = output_filters[index + start] + output_filters[index + end]
+        #     else:  # 如果没有第二个参数，end=0，则对应下面的公式，此时若start>0，由于start = start - index，
+        #     #再执行index + start输出的还是第start层的特征;若start<0，则start还是start，输出index+start(而start<0)故index向后退start层的特征。
+        #         filters = output_filters[index + start]
+
         elif module_def["type"] == "shortcut":
             filters = output_filters[1:][int(module_def["from"])]
             modules.add_module(f"shortcut_{module_i}", EmptyLayer())
+            # 使用空的层，因为它还要执行一个非常简单的操作（加）。没必要更新 filters 变量,因为它只是将前一层的特征图添加到后面的层上而已。
 
         elif module_def["type"] == "yolo":
             anchor_idxs = [int(x) for x in module_def["mask"].split(",")]
@@ -75,6 +107,7 @@ def create_modules(module_defs):
             img_size = int(hyperparams["height"])
             # Define detection layer
             yolo_layer = YOLOLayer(anchors, num_classes, img_size)
+            # 锚点,检测,位置回归,分类，这个类见predict_transform中
             modules.add_module(f"yolo_{module_i}", yolo_layer)
         # Register module list and number of output filters
         module_list.append(modules)
@@ -97,7 +130,9 @@ class Upsample(nn.Module):
 
 
 class EmptyLayer(nn.Module):
-    """Placeholder for 'route' and 'shortcut' layers"""
+    """Placeholder for 'route' and 'shortcut' layers
+     为shortcut layer / route layer 准备, 具体功能不在此实现，在Darknet类的forward函数中有体现
+     """
 
     def __init__(self):
         super(EmptyLayer, self).__init__()
@@ -236,8 +271,8 @@ class Darknet(nn.Module):
 
     def __init__(self, config_path, img_size=416):
         super(Darknet, self).__init__()
-        self.module_defs = parse_model_config(config_path)
-        self.hyperparams, self.module_list = create_modules(self.module_defs)
+        self.module_defs = parse_model_config(config_path)#获取模型定义
+        self.hyperparams, self.module_list = create_modules(self.module_defs)#创建模型结构
         self.yolo_layers = [layer[0] for layer in self.module_list if hasattr(layer[0], "metrics")]
         self.img_size = img_size
         self.seen = 0
@@ -268,7 +303,13 @@ class Darknet(nn.Module):
 
         # Open the weights file
         with open(weights_path, "rb") as f:
-            header = np.fromfile(f, dtype=np.int32, count=5)  # First five are header values
+
+            # The first 5 values are header information
+            # 1. Major version number
+            # 2. Minor Version Number
+            # 3. Subversion number
+            # 4,5. Images seen by the network (during training)
+            header = np.fromfile(f, dtype=np.int32, count=5)  # First five are header values# 这里读取first 5 values权重
             self.header_info = header  # Needed to write header when saving weights
             self.seen = header[3]  # number of images seen during training
             weights = np.fromfile(f, dtype=np.float32)  # The rest are weights

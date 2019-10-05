@@ -22,7 +22,13 @@ from torchvision import transforms
 from torch.autograd import Variable
 import torch.optim as optim
 
+#测试图片和类名的文件夹路径信息
+image_folder = "/media/xddz/本地磁盘/Learning/CODE_DATA/DATA/yolov3_data/samples"
+class_path   = "/media/xddz/D/DATA/yolov3_data/coco.names"
+
+
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=100, help="number of epochs")
     parser.add_argument("--batch_size", type=int, default=8, help="size of each image batch")
@@ -41,8 +47,9 @@ if __name__ == "__main__":
 
     logger = Logger("logs")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")#选择gpu或是cpu
 
+    #创建output和checkpoints文件夹
     os.makedirs("output", exist_ok=True)
     os.makedirs("checkpoints", exist_ok=True)
 
@@ -58,6 +65,7 @@ if __name__ == "__main__":
 
     # If specified we start from checkpoint
     if opt.pretrained_weights:
+        #不同形式的预训练权重文件
         if opt.pretrained_weights.endswith(".pth"):
             model.load_state_dict(torch.load(opt.pretrained_weights))
         else:
@@ -94,7 +102,7 @@ if __name__ == "__main__":
     ]
 
     for epoch in range(opt.epochs):
-        model.train()
+        model.train()#切换到训练模式
         start_time = time.time()
         for batch_i, (_, imgs, targets) in enumerate(dataloader):
             batches_done = len(dataloader) * epoch + batch_i
@@ -103,7 +111,7 @@ if __name__ == "__main__":
             targets = Variable(targets.to(device), requires_grad=False)
 
             loss, outputs = model(imgs, targets)
-            loss.backward()
+            loss.backward()#梯度回传
 
             if batches_done % opt.gradient_accumulations:
                 # Accumulates gradient before each step
